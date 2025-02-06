@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "lmstudio_client.Client": {
+      "commandName": "Project"
+    },
+    "WSL": {
+      "commandName": "WSL2",
+      "distributionName": ""
+    }
+  }
+}

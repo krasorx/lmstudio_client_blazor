@@ -1,0 +1,274 @@
+﻿@page "/lmstudio"
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using System.Text.Encodings
+@using System.Text.RegularExpressions
+@rendermode InteractiveWebAssembly
+
+<PageTitle>LmStudio</PageTitle>
+
+<h1>LmStudio</h1>
+
+<p>Para hablar con IA local.</p>
+
+<div class="container">
+    <select @bind="model" class="form-select">
+        @foreach (var model in models)
+        {
+            <option value="@model">@model</option>
+        }
+    </select>
+    <br />
+    @if (messages == null)
+    {
+        <p><em>Loading...</em></p>
+    }
+    else
+    {
+        <div>
+            <p>Respuesta</p>
+            <div class="chat-history">
+                @foreach (var message in messages)
+                {
+                    <div class="message @message.Role.ToLower()">
+                        <span class="timestamp">@message.Timestamp.ToShortTimeString()</span>
+                        <span class="role">@message.Role:</span>
+                        <p class="content">@message.Content</p>
+                    </div>
+                }
+            </div>
+        </div>
+
+    }
+</div>
+
+<div class="container">
+    
+
+    <InputTextArea @bind-Value="your_message" class="content" />
+    <button class="btn btn-primary" @onclick="@(async (e) => await SendMessage(e))">Enviar</button>
+</div>
+
+@code {
+    private string selectedModel;
+    private List<string> models = new();
+    private IEnumerable<Agent_response>? messages = [];
+    private bool getBranchesError;
+    private bool shouldRender;
+    private string your_message;
+    private int maxTokens = 1000;
+    private string model = "deepseek-r1-distill-qwen-14b";
+    private string systemPrompt = "You are a helpful assistant that can open safe web links, tell the current time, and analyze directory contents. Use these capabilities whenever they might be helpful.";
+    private string userPrompt = "What can you do?";
+
+    //protected override bool ShouldRender() => shouldRender;
+    private bool isInitialized = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(selectedModel))
+                Console.WriteLine(selectedModel);
+            var client = new HttpClient(); ;
+            var request = new HttpRequestMessage(HttpMethod.Get, "http://localhost:1234/v1/models");
+
+            var response = await client.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadAsStringAsync();
+                // Parse the JSON response to extract model names
+                var modelsResponse = JsonSerializer.Deserialize<ModelsRoot>(result);
+                this.models = modelsResponse.data.Select(m => m.id).ToList();
+            }
+            else
+            {
+                Console.WriteLine("Error: " + response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    protected async Task SendMessage(MouseEventArgs mouseEventArgs)
+    {
+        try
+        {
+            // Add user message to chat history
+            messages = messages.Append(new Agent_response
+            {
+                Role = "user",
+                Content = your_message,
+                Timestamp = DateTime.Now
+            }).ToList();
+
+            // Create proper request object
+            var requestData = new
+            {
+                model = model,
+                messages = new[]
+                {
+                new { role = "system", content = systemPrompt },
+                new { role = "user", content = your_message }
+            },
+                temperature = 0.7,
+                max_tokens = maxTokens,
+                stream = false // Disable streaming for simpler initial implementation
+            };
+
+            var client = new HttpClient();
+            var jsonRequestData = JsonSerializer.Serialize(requestData);
+            var bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonRequestData);
+
+            // Imprimir el contenido de la solicitud en la consola
+            Console.WriteLine("Request JSON: " + jsonRequestData);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:1234/v1/chat/completions")
+            {
+                Content = new ByteArrayContent(bodyRaw)
+            };
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+
+            // Imprimir el contenido de la solicitud antes de enviarla
+            var requestContent = await request.Content.ReadAsStringAsync();
+            Console.WriteLine("Request Content: " + requestContent);
+
+            var response = await client.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                // Handle response
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var apiResponse = JsonSerializer.Deserialize<LmStudioResponse>(responseContent);
+
+                // Add AI response to chat history
+                var assistantMessage = apiResponse?.Choices?.FirstOrDefault()?.Message?.Content;
+                if (!string.IsNullOrEmpty(assistantMessage))
+                {
+                    messages = messages.Append(new Agent_response
+                    {
+                        Role = "assistant",
+                        Content = assistantMessage,
+                        Timestamp = DateTime.Now
+                    }).ToList();
+                }
+
+                your_message = string.Empty; // Clear input field
+            }
+            else
+            {
+                getBranchesError = true;
+                // Handle error response
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Error: {response.StatusCode} - {errorContent}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception: {ex.Message}");
+            getBranchesError = true;
+        }
+
+        shouldRender = true;
+    }
+
+    private List<ContentSection> ParseContent(string content)
+    {
+        var sections = new List<ContentSection>();
+        var matches = Regex.Matches(content, @"<think>(.*?)</think>", RegexOptions.Singleline);
+
+        int lastIndex = 0;
+        foreach (Match match in matches)
+        {
+            // Add text before the match
+            if (match.Index > lastIndex)
+            {
+                sections.Add(new ContentSection
+                {
+                    Text = content[lastIndex..match.Index],
+                    IsThink = false
+                });
+            }
+
+            // Add the think section
+            sections.Add(new ContentSection
+            {
+                Text = match.Groups[1].Value,
+                IsThink = true
+            });
+
+            lastIndex = match.Index + match.Length;
+        }
+
+        // Add remaining text after last match
+        if (lastIndex < content.Length)
+        {
+            sections.Add(new ContentSection
+            {
+                Text = content[lastIndex..],
+                IsThink = false
+            });
+        }
+
+        return sections;
+    }
+
+    private class ContentSection
+    {
+        public string Text { get; set; }
+        public bool IsThink { get; set; }
+    }
+
+    private class ModelsResponse
+    {
+        public List<string> data { get; set; }
+    }
+
+    public class ModelsRoot
+    {
+        public List<Data> data { get; set; } = new();
+
+        public class Data
+        {
+            public string id { get; set; }
+        }
+    }
+
+    public class Agent_response
+    {
+        [JsonPropertyName("role")]
+        public string Role { get; set; }
+
+        [JsonPropertyName("content")]
+        public string Content { get; set; }
+
+        [JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+    }
+
+    public class LmStudioResponse
+    {
+        [JsonPropertyName("choices")]
+        public List<LmStudioChoice> Choices { get; set; }
+    }
+
+    public class LmStudioChoice
+    {
+        [JsonPropertyName("message")]
+        public LmStudioMessage Message { get; set; }
+    }
+
+    public class LmStudioMessage
+    {
+        [JsonPropertyName("role")]
+        public string Role { get; set; }
+
+        [JsonPropertyName("content")]
+        public string Content { get; set; }
+    }
+
+
+}
