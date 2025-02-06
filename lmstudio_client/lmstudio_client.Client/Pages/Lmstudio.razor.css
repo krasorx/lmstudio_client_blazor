@@ -39,3 +39,17 @@
     font-style: italic;
     border-left: 3px solid #ffd700;
 }
+/* Code blocks */
+.code-block {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+}
+
+pre[class*="language-"] {
+    margin: 0 !important;
+    background: transparent !important;
+}

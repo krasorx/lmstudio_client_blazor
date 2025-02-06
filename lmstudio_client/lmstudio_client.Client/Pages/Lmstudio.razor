@@ -33,15 +33,35 @@
                     <div class="message @message.Role.ToLower()">
                         <span class="timestamp">@message.Timestamp.ToShortTimeString()</span>
                         <span class="role">@message.Role:</span>
-                        <p class="content">@message.Content</p>
+                        <div class="content">
+                            @foreach (var contentSection in ParseContent(message.Content))
+                            {
+                                @if (contentSection.IsThink)
+                                {
+                                    <span class="think-section">@contentSection.Text</span>
+                                }
+                                else
+                                {
+                                    @if (contentSection.IsCode)
+                                    {
+                                        <pre><code>@contentSection.Text</code></pre>
+                                    }
+                                    else
+                                    {
+                                        @contentSection.Text
+                                    }
+                                }
+
+
+                            }
+                        </div>
                     </div>
+
                 }
             </div>
         </div>
-
     }
-</div>
-
+    </div>
 <div class="container">
     
 
@@ -71,7 +91,7 @@
             if (!string.IsNullOrEmpty(selectedModel))
                 Console.WriteLine(selectedModel);
             var client = new HttpClient(); ;
-            var request = new HttpRequestMessage(HttpMethod.Get, "http://localhost:1234/v1/models");
+            var request = new HttpRequestMessage(HttpMethod.Get, "http://192.168.0.114:1234/v1/models");
 
             var response = await client.SendAsync(request);
 
@@ -126,7 +146,7 @@
             // Imprimir el contenido de la solicitud en la consola
             Console.WriteLine("Request JSON: " + jsonRequestData);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:1234/v1/chat/completions")
+            var request = new HttpRequestMessage(HttpMethod.Post, "http://192.168.0.114:1234/v1/chat/completions")
             {
                 Content = new ByteArrayContent(bodyRaw)
             };
@@ -179,6 +199,7 @@
     {
         var sections = new List<ContentSection>();
         var matches = Regex.Matches(content, @"<think>(.*?)</think>", RegexOptions.Singleline);
+        var matchesCode = Regex.Matches(content, @"```(.*?)```", RegexOptions.Singleline);
 
         int lastIndex = 0;
         foreach (Match match in matches)
@@ -189,7 +210,8 @@
                 sections.Add(new ContentSection
                 {
                     Text = content[lastIndex..match.Index],
-                    IsThink = false
+                    IsThink = false,
+                    IsCode = false
                 });
             }
 
@@ -197,7 +219,8 @@
             sections.Add(new ContentSection
             {
                 Text = match.Groups[1].Value,
-                IsThink = true
+                IsThink = true,
+                IsCode = false
             });
 
             lastIndex = match.Index + match.Length;
@@ -209,7 +232,45 @@
             sections.Add(new ContentSection
             {
                 Text = content[lastIndex..],
-                IsThink = false
+                IsThink = false,
+                IsCode = false
+            });
+        }
+
+        // Process code sections
+        lastIndex = 0;
+        foreach (Match match in matchesCode)
+        {
+            // Add text before the match
+            if (match.Index > lastIndex)
+            {
+                sections.Add(new ContentSection
+                {
+                    Text = content[lastIndex..match.Index],
+                    IsThink = false,
+                    IsCode = false
+                });
+            }
+
+            // Add the code section
+            sections.Add(new ContentSection
+            {
+                Text = match.Groups[1].Value,
+                IsThink = false,
+                IsCode = true
+            });
+
+            lastIndex = match.Index + match.Length;
+        }
+
+        // Add remaining text after last match
+        if (lastIndex < content.Length)
+        {
+            sections.Add(new ContentSection
+            {
+                Text = content[lastIndex..],
+                IsThink = false,
+                IsCode = false
             });
         }
 
@@ -218,8 +279,9 @@
 
     private class ContentSection
     {
-        public string Text { get; set; }
+        public string? Text { get; set; }
         public bool IsThink { get; set; }
+        public bool IsCode { get; set; }
     }
 
     private class ModelsResponse
